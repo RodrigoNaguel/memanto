@@ -30,9 +30,6 @@ from memanto.app.utils.errors import (
 
 router = APIRouter()
 
-# Import auth dependencies (avoid circular import)
-# Include memory operations sub-router
-# Commented to avoid triggering ruff linter
 from memanto.app.routes import memory  # noqa: E402
 from memanto.app.routes.auth_deps import (  # noqa: E402
     clear_session_cookie,
@@ -43,8 +40,6 @@ from memanto.app.routes.auth_deps import (  # noqa: E402
 )
 
 router.include_router(memory.router, prefix="/agents", tags=["Memory Operations"])
-
-# Service instances
 agent_service = AgentService()
 
 
@@ -54,20 +49,13 @@ def get_agent_service():
 
 
 async def _namespace_item_counts(moorcheh_api_key: str) -> dict[str, int]:
-    """Map namespace_name -> live document count from Moorcheh.
-
-    The ``memory_count`` stored in local agent metadata is never updated after
-    creation, so it is always 0. Moorcheh tracks the authoritative per-namespace
-    document count, which is what the UI should display. Best-effort: returns an
-    empty map if Moorcheh is unreachable so agent listing still succeeds.
-    """
+    """Map namespace_name -> live document count from Moorcheh."""
     try:
         client = moorcheh_clients.get_moorcheh_client()
         ns_resp = await asyncio.to_thread(client.namespaces.list)
         namespaces = ns_resp.get("namespaces", []) if isinstance(ns_resp, dict) else []
         if not isinstance(namespaces, list):
             return {}
-
         counts: dict[str, int] = {}
         for ns in namespaces:
             if not isinstance(ns, dict):
@@ -85,40 +73,20 @@ async def _namespace_item_counts(moorcheh_api_key: str) -> dict[str, int]:
         return {}
 
 
-# ============================================================================
-# AGENT LIFECYCLE ENDPOINTS
-# ============================================================================
-
-
 @router.post("/agents", response_model=AgentInfo, status_code=201)
 async def create_agent(
     agent_create: AgentCreate, moorcheh_api_key: str = Depends(verify_moorcheh_api_key)
 ):
-    """
-    Create a new MEMANTO agent
-
-    Creates:
-    - Agent metadata in ~/.memanto/agents/
-    - Moorcheh namespace: memanto_agent_{agent_id}
-
-    The agent is ready to activate once created.
-    """
+    """Create a new MEMANTO agent."""
     try:
-        agent = agent_service.create_agent(agent_create, moorcheh_api_key)
-        return agent
+        return agent_service.create_agent(agent_create, moorcheh_api_key)
     except AgentAlreadyExistsError as e:
         raise map_error_to_http_exception(e)
 
 
 @router.get("/agents", response_model=AgentList)
 async def list_agents(moorcheh_api_key: str = Depends(verify_moorcheh_api_key)):
-    """
-    List all agents for this Moorcheh account
-
-    Returns agents sorted by creation date (newest first). The ``memory_count``
-    of each agent is populated with the live document count from its Moorcheh
-    namespace rather than the stale value in local metadata.
-    """
+    """List all agents for this Moorcheh account."""
     agent_list = agent_service.list_agents()
     counts = await _namespace_item_counts(moorcheh_api_key)
     for agent in agent_list.agents:
@@ -131,12 +99,7 @@ async def list_agents(moorcheh_api_key: str = Depends(verify_moorcheh_api_key)):
 async def get_agent(
     agent_id: str, moorcheh_api_key: str = Depends(verify_moorcheh_api_key)
 ):
-    """
-    Get agent information
-
-    ``memory_count`` reflects the live document count from the agent's Moorcheh
-    namespace.
-    """
+    """Get agent information."""
     agent = agent_service.get_agent(agent_id)
     if not agent:
         raise map_error_to_http_exception(
@@ -156,11 +119,14 @@ async def delete_agent(
     ),
     moorcheh_api_key: str = Depends(verify_moorcheh_api_key),
 ):
-    """
-    Delete agent
+    """Delete an agent and, when requested, its remote memory namespace.
 
-    Always deletes local agent metadata.
-    If `delete-backup-too=true`, also deletes the agent memory namespace in Moorcheh.
+    Security invariant: when ``delete-backup-too`` is requested we must not
+    destroy the local metadata unless deletion of the remote namespace has
+    succeeded.  Otherwise a transient backend/auth failure can orphan sensitive
+    memories while returning a false "all namespace memories" success message.
+    Keeping the local record makes the operation retryable and prevents a false
+    deletion guarantee.
     """
     try:
         agent = agent_service.get_agent(agent_id)
@@ -170,18 +136,18 @@ async def delete_agent(
             )
 
         if delete_backup_too:
-            # Delete remote namespace only when explicitly requested.
             moorcheh_client = moorcheh_clients.get_moorcheh_client()
             try:
                 moorcheh_client.namespaces.delete(namespace_name=agent.namespace)
-            except Exception:
-                # If namespace is already gone/unreachable, keep best-effort behavior
-                # and continue removing local metadata.
-                pass
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Remote namespace deletion failed; local agent metadata "
+                        "was preserved so deletion can be retried safely."
+                    ),
+                ) from exc
 
-        # Revoke the persisted token before removing agent metadata. If local
-        # session cleanup fails, abort the deletion so an apparently deleted
-        # agent cannot keep authorizing requests with its old token.
         get_session_service().delete_session(agent_id)
         agent_service.delete_agent(agent_id)
         return {
@@ -198,11 +164,6 @@ async def delete_agent(
         raise map_error_to_http_exception(e)
 
 
-# ============================================================================
-# SESSION LIFECYCLE ENDPOINTS
-# ============================================================================
-
-
 @router.post("/agents/{agent_id}/activate", response_model=Session)
 async def activate_agent(
     agent_id: str,
@@ -210,26 +171,13 @@ async def activate_agent(
     response: Response,
     moorcheh_api_key: str = Depends(verify_moorcheh_api_key),
 ):
-    """
-    Activate agent and start session
-
-    Creates:
-    - JWT session token (6-hour expiration by default, configurable)
-    - Session file in ~/.memanto/sessions/
-    - Active session marker
-
-    Returns session token for use in memory operations.
-    """
-    # Check if agent exists
+    """Activate agent and start session."""
     agent = agent_service.get_agent(agent_id)
     if not agent:
         raise map_error_to_http_exception(
             AgentNotFoundError(f"Agent '{agent_id}' not found")
         )
-
-    # Session duration is controlled by server defaults.
     duration_hours = settings.SESSION_DEFAULT_DURATION_HOURS
-
     try:
         session = get_session_service().create_session(
             agent_id=agent_id,
@@ -237,16 +185,12 @@ async def activate_agent(
             duration_hours=duration_hours,
         )
         set_session_cookie(response, session.session_token, request)
-
-        # Update agent stats
         agent_service.update_agent_stats(
             agent_id=agent_id,
             last_session=session.started_at,
             increment_session_count=True,
         )
-
         return session
-
     except Exception as e:
         raise map_error_to_http_exception(e)
 
@@ -258,19 +202,13 @@ async def deactivate_agent(
     session: Session = Depends(get_current_session),
     _server_api_key: str = Depends(verify_moorcheh_api_key),
 ):
-    """
-    Deactivate agent and end session
-
-    Terminates the current session and returns statistics.
-    Requires X-Session-Token header and matching agent_id.
-    """
+    """Deactivate agent and end session."""
     if session.agent_id != agent_id:
         raise map_error_to_http_exception(
             AuthorizationError(
                 f"Session is for agent '{session.agent_id}', cannot access '{agent_id}'"
             )
         )
-
     try:
         summary = get_session_service().end_session(agent_id)
         clear_session_cookie(response)
@@ -283,18 +221,11 @@ async def deactivate_agent(
 async def get_status(
     _moorcheh_api_key: str = Depends(verify_moorcheh_api_key),
 ):
-    """
-    Get current active session status.
-
-    Requires management credential or loopback origin (same as other
-    agent-lifecycle endpoints). Reads the active session from local state.
-    """
+    """Get current active session status."""
     session = get_session_service().get_active_session()
     if session is None:
         raise HTTPException(status_code=404, detail="No active session")
-
     time_remaining = session.time_remaining()
-
     return SessionInfo(
         session_id=session.session_id,
         agent_id=session.agent_id,
