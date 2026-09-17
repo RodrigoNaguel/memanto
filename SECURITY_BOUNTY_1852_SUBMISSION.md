@@ -1,0 +1,1 @@
+Bounty #1852 submission. See `docs/security-bounty-1852.md` for the flaw summary, deterministic reproduction, impact, and patch behavior. The regression test is `tests/test_security_remote_deletion.py`.
