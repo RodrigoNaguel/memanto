@@ -32,14 +32,5 @@ async def test_delete_backup_failure_preserves_local_agent(monkeypatch):
 
     assert exc_info.value.status_code == 502
     assert "preserved" in exc_info.value.detail
+    assert "backend unavailable" not in exc_info.value.detail
     local_agent_service.delete_agent.assert_not_called()
-
-
-def test_remote_delete_error_message_does_not_leak_backend_exception():
-    """The public error is intentionally generic and contains no backend secret."""
-    detail = (
-        "Remote namespace deletion failed; local agent metadata was preserved "
-        "so deletion can be retried safely."
-    )
-    assert "api" not in detail.lower()
-    assert "token" not in detail.lower()
