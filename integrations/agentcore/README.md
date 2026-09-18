@@ -1,6 +1,6 @@
 # Amazon Bedrock AgentCore Runtime + Memanto
 
-Persistent memory for [Amazon Bedrock AgentCore Runtime](https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html) agents using Memanto — the same **recall → execute → retain** pattern as [Hindsight’s AgentCore integration](https://hindsight.vectorize.io/sdks/integrations/agentcore).
+Persistent memory for [Amazon Bedrock AgentCore Runtime](https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html) agents using Memanto — **recall → execute → retain** on each handler turn.
 
 AgentCore Runtime sessions are **ephemeral**: they terminate on inactivity and reprovision fresh environments. Memanto stores memory in a stable **agent namespace** keyed by validated user identity, not by `runtimeSessionId`, so context survives session churn.
 
@@ -21,7 +21,7 @@ AgentCore Runtime invocation
    after_turn()          ← Memanto remember (async by default)
 ```
 
-Default Memanto agent id (analogous to Hindsight’s memory bank):
+Default Memanto agent id:
 
 ```
 tenant-{tenant_id}-user-{user_id}-agent-{agent_name}
@@ -134,17 +134,6 @@ For complex planning steps you can increase `recall_limit` on `MemantoRuntimeAda
 | Recall error | Logged warning, empty context |
 | Retain failure | Logged warning, user turn unaffected |
 | Missing `user_id` | `AgentResolutionError` at resolve time |
-
-## Memanto vs Hindsight on AgentCore
-
-| | Hindsight AgentCore | Memanto AgentCore (this pattern) |
-|--|---------------------|----------------------------------|
-| Stable key | Memory bank string | Memanto `agent_id` |
-| Recall API | Hindsight recall / reflect | Memanto semantic `recall` |
-| Memory model | Bank documents | 13 typed memory types + provenance |
-| Package | `hindsight-agentcore` on PyPI | Preview: `integrations/agentcore` |
-
-Both integrations target the same runtime constraint: **ephemeral sessions, durable user memory.**
 
 ## Test before implementing in production
 

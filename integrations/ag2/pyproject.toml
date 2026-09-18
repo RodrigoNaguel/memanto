@@ -3,15 +3,16 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "memanto-agentcore"
+name = "memanto-ag2"
 version = "0.1.0"
-description = "Amazon Bedrock AgentCore Runtime adapter for Memanto persistent memory (preview)"
+description = "AG2 (AutoGen) tools for Memanto persistent memory (preview)"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10,<4"
 authors = [{ name = "Memanto", email = "info@memanto.ai" }]
 dependencies = [
     "memanto>=0.2.21",
+    "pydantic>=2.0",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -20,7 +21,9 @@ classifiers = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["memanto_agentcore"]
+packages = ["memanto_ag2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+# AG2 1.x is a new API; this integration targets 0.9.x (``from autogen import ...``).
+ag2 = ["ag2>=0.9.0,<1"]
+dev = ["pytest>=8.0", "ag2>=0.9.0,<1"]

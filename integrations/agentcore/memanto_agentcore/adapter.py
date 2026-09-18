@@ -37,8 +37,8 @@ class TurnContext:
 def default_agent_id_resolver(context: TurnContext) -> str:
     """Map tenant + user + agent to a Memanto agent_id (not runtimeSessionId).
 
-    Memanto agent IDs allow only ``[A-Za-z0-9_-]``, so this mirrors Hindsight's
-    ``tenant:…:user:…:agent:…`` bank shape with hyphen segments instead of colons.
+    Memanto agent IDs allow only ``[A-Za-z0-9_-]``. Readable form:
+    ``tenant-{tenant}-user-{user}-agent-{agent}``; long keys hash structured components.
     """
     if not (context.user_id or "").strip():
         raise AgentResolutionError(
