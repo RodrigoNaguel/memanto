@@ -159,8 +159,9 @@ async def delete_agent(
     """
     Delete agent
 
-    Always deletes local agent metadata.
-    If `delete-backup-too=true`, also deletes the agent memory namespace in Moorcheh.
+    Deletes local agent metadata after any requested remote cleanup succeeds.
+    If `delete-backup-too=true`, the Moorcheh namespace is deleted first; if that
+    remote deletion fails, local metadata is preserved so the operation can be retried.
     """
     try:
         agent = agent_service.get_agent(agent_id)
