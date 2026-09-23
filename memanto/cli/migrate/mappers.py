@@ -568,6 +568,161 @@ def map_okf(export: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+# --------------------------------------------------------------------------
+# Zep
+# --------------------------------------------------------------------------
+
+
+def _zep_edge_is_current(edge: dict[str, Any], now: datetime) -> bool:
+    """False for facts Zep has superseded or that have stopped being true.
+
+    Zep never deletes a contradicted fact; it stamps ``expired_at`` (replaced
+    by a newer fact) or ``invalid_at`` (the fact's real-world end). Importing
+    those as live memories would resurrect stale knowledge, so they're
+    skipped. A future ``invalid_at`` is still current and is kept.
+    """
+    if _parse_dt(edge.get("expired_at")) is not None:
+        return False
+    invalid_at = _parse_dt(edge.get("invalid_at"))
+    return invalid_at is None or invalid_at > now
+
+
+def map_zep(export: dict[str, Any]) -> list[dict[str, Any]]:
+    """Map Zep graph edges (facts) to rich Memanto memory payloads."""
+    rows: list[dict[str, Any]] = []
+    migrated_at = _now_utc()
+
+    for edge in export.get("memories", []) or []:
+        content = (edge.get("fact") or "").strip()
+        if not content or not _zep_edge_is_current(edge, migrated_at):
+            continue
+
+        user_id = edge.get("export_user_id")
+        relation = edge.get("name")
+        tags: list[str] = []
+        if user_id:
+            tags.append(f"user={user_id}")
+        if relation:
+            tags.append(str(relation).lower())
+
+        created_at = _pick_first_dt(edge, ("valid_at", "created_at"))
+        invalid_at = _parse_dt(edge.get("invalid_at"))
+        episodes = edge.get("episodes") or []
+
+        footer = _format_supporting_data(
+            [
+                ("Source", f"zep:{edge.get('uuid')}" if edge.get("uuid") else None),
+                ("Zep user", user_id),
+                ("Relation", relation),
+                ("From", edge.get("source_node_name")),
+                ("To", edge.get("target_node_name")),
+                ("Valid from", created_at.isoformat() if created_at else None),
+                ("Valid until", invalid_at.isoformat() if invalid_at else None),
+                ("Zep attributes", edge.get("attributes")),
+                ("Source episodes", len(episodes) if episodes else None),
+            ]
+        )
+
+        rows.append(
+            {
+                "title": _title_from(content),
+                "content": _attach_footer(content, footer),
+                # Edge facts span preferences, relationships, events, ...;
+                # let the parser classify rather than flatten them to "fact".
+                "type": None,
+                "tags": tags,
+                "confidence": 0.8,
+                "source": "zep",
+                "source_ref": str(edge.get("uuid")) if edge.get("uuid") else None,
+                "provenance": "imported",
+                "created_at": created_at,
+                "updated_at": migrated_at,
+            }
+        )
+    return rows
+
+
+# --------------------------------------------------------------------------
+# Hindsight
+# --------------------------------------------------------------------------
+
+# Hindsight's three fact networks. ``world`` is objective knowledge,
+# ``experience`` is what the agent did or went through, and ``observation``
+# is a consolidated summary synthesized from source facts.
+_HINDSIGHT_FACT_TYPE_TO_TYPE: dict[str, str] = {
+    "world": "fact",
+    "experience": "event",
+    "observation": "observation",
+}
+
+
+def map_hindsight(export: dict[str, Any]) -> list[dict[str, Any]]:
+    """Map Hindsight memory units to rich Memanto memory payloads.
+
+    Units a user curated out (``state == "invalidated"``) are skipped; the
+    listing API returns them by default so curation stays auditable.
+    """
+    rows: list[dict[str, Any]] = []
+    migrated_at = _now_utc()
+
+    for unit in export.get("memories", []) or []:
+        content = (unit.get("text") or "").strip()
+        if not content or unit.get("state") == "invalidated":
+            continue
+
+        fact_type = (unit.get("fact_type") or "").strip().lower()
+        bank_id = unit.get("export_bank_id") or unit.get("bank_id")
+
+        tags: list[str] = []
+        if bank_id:
+            tags.append(f"bank={bank_id}")
+        for tag in unit.get("tags") or []:
+            if tag and str(tag) not in tags:
+                tags.append(str(tag))
+
+        # When the fact happened beats when it was ingested.
+        created_at = _pick_first_dt(
+            unit, ("occurred_start", "date", "mentioned_at", "created_at")
+        )
+        occurred_start = _parse_dt(unit.get("occurred_start"))
+        occurred_end = _parse_dt(unit.get("occurred_end"))
+
+        footer = _format_supporting_data(
+            [
+                ("Source", f"hindsight:{unit.get('id')}" if unit.get("id") else None),
+                ("Hindsight bank", bank_id),
+                ("Fact type", fact_type or None),
+                ("Context", unit.get("context")),
+                ("Entities", unit.get("entities")),
+                (
+                    "Occurred from",
+                    occurred_start.isoformat() if occurred_start else None,
+                ),
+                ("Occurred until", occurred_end.isoformat() if occurred_end else None),
+                ("Times observed", unit.get("proof_count")),
+                ("Document id", unit.get("document_id")),
+                ("Edited at", unit.get("edited_at")),
+                ("Hindsight metadata", unit.get("metadata")),
+            ]
+        )
+
+        rows.append(
+            {
+                "title": _title_from(content),
+                "content": _attach_footer(content, footer),
+                "type": _HINDSIGHT_FACT_TYPE_TO_TYPE.get(fact_type),
+                "tags": tags,
+                "confidence": 0.8,
+                "source": "hindsight",
+                "source_ref": str(unit.get("id")) if unit.get("id") else None,
+                "provenance": "imported",
+                "created_at": created_at,
+                "updated_at": migrated_at,
+            }
+        )
+    return rows
+
+
 # Langfuse is deliberately absent: its rows are observability events, not
 # memories, so one incident collapses into a single grouped payload rather
 # than mapping row-for-row. That needs the user's capture settings, which
@@ -577,6 +732,8 @@ MAPPERS: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "letta": map_letta,
     "supermemory": map_supermemory,
     "okf": map_okf,
+    "zep": map_zep,
+    "hindsight": map_hindsight,
 }
 
 
