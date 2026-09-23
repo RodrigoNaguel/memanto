@@ -103,3 +103,11 @@ GitHub on [https://memanto.ai/contributor-onboard](https://memanto.ai/contributo
 - @czuba92-pixel
 - @mittai17
 - @RodrigoNaguel
+- @who-lee
+- @akashlamani835-web
+- @woahwhattheheck
+- @dlowzzxx
+- @UniteAndCreateForLife
+- @Priyaanshuuu
+- @ayduanzf-hub
+- @hoaimyn05
