@@ -60,6 +60,29 @@ _DEFAULT_TITLE_CHARS = 80
 _MAX_TITLE_CHARS = 100  # MemoryRecord.title max_length
 _MAX_CONTENT_CHARS = 10000  # MemoryRecord.content max_length
 _MAX_FOOTER_CHARS = 800  # cap supporting-data footer so it never dominates
+_MAX_TAGS = 20  # MemoryRecord.tags max_length
+_MAX_TAG_CHARS = 64  # MemoryTag max_length
+
+
+def _bounded_tags(tags: list[str]) -> tuple[list[str], list[str]]:
+    """Split tags into ``(kept, extra)`` so every kept tag is storable as-is.
+
+    One out-of-bounds tag list fails validation for the whole write batch,
+    so tags that are too long, contain a comma (tags are stored
+    comma-joined), or exceed the per-memory cap are returned as ``extra``
+    for the supporting-data footer instead of being altered.
+    """
+    kept: list[str] = []
+    extra: list[str] = []
+    for tag in tags:
+        text = tag.strip()
+        if not text or text in kept:
+            continue
+        if len(text) > _MAX_TAG_CHARS or "," in text or len(kept) >= _MAX_TAGS:
+            extra.append(text)
+        else:
+            kept.append(text)
+    return kept, extra
 
 
 def _title_from(content: str) -> str:
@@ -604,6 +627,7 @@ def map_zep(export: dict[str, Any]) -> list[dict[str, Any]]:
             tags.append(f"user={user_id}")
         if relation:
             tags.append(str(relation).lower())
+        tags, extra_tags = _bounded_tags(tags)
 
         created_at = _pick_first_dt(edge, ("valid_at", "created_at"))
         invalid_at = _parse_dt(edge.get("invalid_at"))
@@ -620,6 +644,7 @@ def map_zep(export: dict[str, Any]) -> list[dict[str, Any]]:
                 ("Valid until", invalid_at.isoformat() if invalid_at else None),
                 ("Zep attributes", edge.get("attributes")),
                 ("Source episodes", len(episodes) if episodes else None),
+                ("Extra tags", extra_tags),
             ]
         )
 
@@ -659,8 +684,9 @@ _HINDSIGHT_FACT_TYPE_TO_TYPE: dict[str, str] = {
 def map_hindsight(export: dict[str, Any]) -> list[dict[str, Any]]:
     """Map Hindsight memory units to rich Memanto memory payloads.
 
-    Units a user curated out (``state == "invalidated"``) are skipped; the
-    listing API returns them by default so curation stays auditable.
+    Units a user curated out (``state == "invalidated"``) are skipped. The
+    listing API already omits them by default; the check guards exports
+    pulled with ``state=invalidated`` or from servers that include them.
     """
     rows: list[dict[str, Any]] = []
     migrated_at = _now_utc()
@@ -673,12 +699,9 @@ def map_hindsight(export: dict[str, Any]) -> list[dict[str, Any]]:
         fact_type = (unit.get("fact_type") or "").strip().lower()
         bank_id = unit.get("export_bank_id") or unit.get("bank_id")
 
-        tags: list[str] = []
-        if bank_id:
-            tags.append(f"bank={bank_id}")
-        for tag in unit.get("tags") or []:
-            if tag and str(tag) not in tags:
-                tags.append(str(tag))
+        raw_tags = [f"bank={bank_id}"] if bank_id else []
+        raw_tags += [str(tag) for tag in unit.get("tags") or [] if tag]
+        tags, extra_tags = _bounded_tags(raw_tags)
 
         # When the fact happened beats when it was ingested.
         created_at = _pick_first_dt(
@@ -702,13 +725,16 @@ def map_hindsight(export: dict[str, Any]) -> list[dict[str, Any]]:
                 ("Times observed", unit.get("proof_count")),
                 ("Document id", unit.get("document_id")),
                 ("Edited at", unit.get("edited_at")),
+                ("Extra tags", extra_tags),
                 ("Hindsight metadata", unit.get("metadata")),
             ]
         )
 
         rows.append(
             {
-                "title": _title_from(content),
+                # Hindsight stores facts as "what | When: ... | Involving: ...";
+                # title on the "what" part, keep the full text as content.
+                "title": _title_from(content.split(" | ", 1)[0]),
                 "content": _attach_footer(content, footer),
                 "type": _HINDSIGHT_FACT_TYPE_TO_TYPE.get(fact_type),
                 "tags": tags,

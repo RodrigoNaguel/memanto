@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+from memanto.app.core import MemoryRecord
 from memanto.cli.analyze import hindsight_export, zep_export
 from memanto.cli.main import app
 from memanto.cli.migrate.mappers import map_hindsight, map_zep
@@ -21,6 +22,19 @@ runner = CliRunner()
 
 PAST = "2025-01-01T00:00:00Z"
 FUTURE = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
+# Mapped-row keys SdkClient.batch_remember passes through to MemoryRecord.
+MEMORY_RECORD_KEYS = (
+    "type",
+    "title",
+    "content",
+    "confidence",
+    "tags",
+    "source",
+    "provenance",
+    "source_ref",
+    "created_at",
+    "updated_at",
+)
 
 
 def zep_edge(uuid="e1", fact="Alice works at Acme", **extra):
@@ -112,6 +126,18 @@ def test_map_hindsight_maps_fact_types_and_skips_invalidated():
     assert rows[1]["created_at"] == datetime(2025, 1, 1, tzinfo=timezone.utc)
     assert rows[0]["created_at"] == datetime(2025, 7, 1, 9, tzinfo=timezone.utc)
     assert rows[0]["tags"] == ["bank=bank-a", "ui"]
+    # Titles drop Hindsight's " | When: ... | Involving: ..." suffix; content keeps it.
+    [row] = map_hindsight(
+        {
+            "memories": [
+                hindsight_unit(
+                    text="Alice joined Acme | When: 2025-03-02 | Involving: Alice"
+                )
+            ]
+        }
+    )
+    assert row["title"] == "Alice joined Acme"
+    assert row["content"].startswith("Alice joined Acme | When: 2025-03-02")
     assert "- Times observed: 3" in rows[0]["content"]
     assert "- Context: settings chat" in rows[0]["content"]
 
@@ -132,6 +158,33 @@ def test_run_migration_writes_zep_rows_in_batches():
     )
 
     assert (summary.imported, summary.failed, summary.batches) == (150, 0, 2)
+
+
+def test_unstorable_tags_move_to_footer_instead_of_failing_the_batch():
+    # One out-of-bounds tag list fails MemoryRecord validation for the whole
+    # write batch, so every mapped row must stay within the tag limits.
+    long_tag = "x" * 80
+    unit = hindsight_unit(
+        tags=["project,billing", long_tag, *(f"t{i}" for i in range(25))]
+    )
+    edge = zep_edge(export_user_id="u" * 70)
+
+    [h_row] = map_hindsight({"memories": [unit]})
+    [z_row] = map_zep({"memories": [edge]})
+
+    assert len(h_row["tags"]) == 20
+    assert h_row["tags"][:2] == ["bank=bank-a", "t0"]
+    assert "project,billing" not in h_row["tags"] and long_tag not in h_row["tags"]
+    assert "- Extra tags: project,billing, " in h_row["content"]
+    assert z_row["tags"] == ["works_at"]
+    assert f"- Extra tags: user={'u' * 70}" in z_row["content"]
+
+    for row in (h_row, z_row):
+        MemoryRecord(
+            agent_id="a",
+            actor_id="a",
+            **{k: row[k] for k in MEMORY_RECORD_KEYS},
+        )
 
 
 # --------------------------------------------------------------------------

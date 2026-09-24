@@ -11,9 +11,9 @@ Endpoints (Hindsight HTTP API — https://hindsight.vectorize.io/api-reference):
 Works against Hindsight Cloud (the default base URL) and self-hosted servers
 (``base_url``). Auth: ``Authorization: Bearer <api_key>``.
 
-The export is a raw, lossless dump: invalidated memory units are kept here
-and dropped by the mapper, so the export file stays a faithful record of the
-source account.
+The listing endpoint omits memory units a user has invalidated, so the
+export holds only valid units; the mapper still skips any invalidated unit it
+is given.
 """
 
 from __future__ import annotations

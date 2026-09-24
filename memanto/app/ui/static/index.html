@@ -6489,7 +6489,7 @@
                         <div class="mig-stat"><div class="label">Failed</div><div class="value ${sum.failed ? 'error' : ''}">${sum.failed || 0}</div></div>` : `
                         <div class="mig-stat"><div class="label">Imported</div><div class="value success">${(sum.imported || 0).toLocaleString()}</div><div class="sub">written to ${escHtml(res.agent_id)}</div></div>
                         <div class="mig-stat"><div class="label">Failed</div><div class="value ${sum.failed ? 'error' : ''}">${sum.failed || 0}</div></div>
-                        <div class="mig-stat"><div class="label">Skipped</div><div class="value warning">${sum.skipped || 0}</div><div class="sub">empty content</div></div>
+                        <div class="mig-stat"><div class="label">Skipped</div><div class="value warning">${sum.skipped || 0}</div><div class="sub">empty or invalidated</div></div>
                         <div class="mig-stat"><div class="label">Batches</div><div class="value">${sum.batches || 0}</div><div class="sub">100 / req</div></div>`;
 
             root.innerHTML = `
