@@ -1226,13 +1226,21 @@ async def shutdown_server(
     return {"status": "shutting down"}
 
 
-_MIGRATE_PROVIDERS = ("mem0", "letta", "supermemory", "okf", "langfuse")
+_MIGRATE_PROVIDERS = (
+    "mem0",
+    "letta",
+    "supermemory",
+    "zep",
+    "hindsight",
+    "okf",
+    "langfuse",
+)
 
 # Providers with no cost/latency baseline to benchmark Memanto against: OKF is
-# a portable local format, and Langfuse is an observability backend, not a
-# memory store being migrated off. The UI hides the savings tiles when the
-# savings object comes back empty.
-_NO_SAVINGS_PROVIDERS = ("okf", "langfuse")
+# a portable local format, Langfuse is an observability backend, not a memory
+# store being migrated off, and Zep/Hindsight have no compare module yet. The
+# UI hides the savings tiles when the savings object comes back empty.
+_NO_SAVINGS_PROVIDERS = ("okf", "langfuse", "zep", "hindsight")
 
 
 def _migrate_compact_metrics(provider: str, metrics: dict) -> dict:
@@ -1436,9 +1444,11 @@ def _migrate_load_or_export(
     provider), so it has no ``api_key`` branch — ``file`` is required and
     points at a bundle directory or a single ``.md`` file.
     """
+    from memanto.cli.analyze.hindsight_export import run_hindsight_export
     from memanto.cli.analyze.letta_export import run_letta_export
     from memanto.cli.analyze.mem0_export import run_mem0_export
     from memanto.cli.analyze.supermemory_export import run_supermemory_export
+    from memanto.cli.analyze.zep_export import run_zep_export
     from memanto.cli.migrate.okf_loader import load_okf_bundle
     from memanto.cli.migrate.runner import load_export
 
@@ -1483,13 +1493,21 @@ def _migrate_load_or_export(
         "mem0": run_mem0_export,
         "letta": run_letta_export,
         "supermemory": run_supermemory_export,
+        "zep": run_zep_export,
+        "hindsight": run_hindsight_export,
     }
     exporter = exporters[provider]
+    # Hindsight is often self-hosted; ``host`` points at that server.
+    exporter_kwargs: dict[str, Any] = {}
+    if provider == "hindsight":
+        exporter_kwargs["base_url"] = (options or {}).get(
+            "host"
+        ) or _config_manager.get_hindsight_base_url()
     stamp = time.strftime("%Y%m%d_%H%M%S")
     dest = _config_manager.get_migrate_dir(provider) / stamp
     dest.mkdir(parents=True, exist_ok=True)
     try:
-        export_path, export = exporter(api_key.strip(), dest)
+        export_path, export = exporter(api_key.strip(), dest, **exporter_kwargs)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"{provider} export failed: {e}")
     return str(export_path), export
